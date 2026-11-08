@@ -1194,5 +1194,22 @@
   "{days}d {hours}h {minutes}m": "{days} 天 {hours} 小时 {minutes} 分钟",
   "{exchange} spot paper baseline v1": "{exchange} 现货模拟盘基线 v1",
   "{seconds} seconds": "{seconds} 秒",
-  "~{0} (Estimated value)": "约 {0}（估算价值）"
+  "~{0} (Estimated value)": "约 {0}（估算价值）",
+  "Operational status is unavailable. Error monitoring will retry without assuming recovery.": "暂时无法读取运行异常状态，将继续检查，不会将其视为已恢复。",
+  "Order operation failed": "订单操作失败",
+  "Exchange connection or initialization failed": "交易所连接或初始化失败",
+  "Exchange connection recovered": "交易所连接恢复",
+  "Connection alert delay (minutes)": "连接异常通知延迟（分钟）",
+  "Notify when an alerted connection problem recovers": "已告警的连接问题恢复时通知",
+  "Order failures notify on the next check. Network and rate-limit errors wait for the configured delay; authentication and initialization errors notify on the next check. Repeated errors are grouped, and recovery requires observing the failed operations succeed.": "订单操作失败在下一次检查时通知。网络异常和限流持续达到设定延迟后才通知；身份验证和初始化失败在下一次检查时通知。同类错误合并提醒，只有观察到此前失败的操作成功后，才视为连接恢复。",
+  "An order network error can leave execution uncertain. Notifications do not retry orders; check the exchange order status before placing another order.": "下单遇到网络异常时，实际执行结果可能不确定。通知不会重试订单；再次下单前请先核对交易所订单状态。",
+  "Recorded connection problems": "已记录的连接异常",
+  "Insufficient exchange balance": "交易所余额不足",
+  "Exchange rejected the order. Check minimum size, precision and trading limits.": "交易所拒绝订单，请检查最小下单量、精度及交易限制。",
+  "Order request had a network error. The bot must reconcile its execution status.": "订单请求发生网络异常，执行结果尚待机器人核对。",
+  "Exchange authentication or permission check failed": "交易所身份验证或权限检查失败",
+  "Exchange rate limit reached": "交易所请求被限流",
+  "Exchange connection timed out or failed": "交易所连接超时或网络异常",
+  "Exchange request failed": "交易所请求失败",
+  "Live service initialization failed. Check account settings and service logs.": "实盘服务初始化失败，请检查账户配置及服务日志。"
 }

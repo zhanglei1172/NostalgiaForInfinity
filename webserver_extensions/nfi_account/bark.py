@@ -21,12 +21,24 @@ from pydantic import BaseModel, ConfigDict, Field, SecretStr
 
 from .credentials import AccountError, AccountManager
 from .origin import is_same_origin
+from .operational import (
+  INCIDENT_EVENTS,
+  advance_operational,
+  claim_incident,
+  delivered_incident,
+  empty_operational,
+  incident_context,
+  incident_message,
+  valid_context,
+  validate_operational,
+)
 from .startup import private_document
 
 LOCK = threading.RLock()
 INTERVAL_SECONDS = 60
 RETRY_SECONDS = 300
-EVENTS = ("profit", "loss", "state")
+EVENTS = ("profit", "loss", "state", *INCIDENT_EVENTS)
+PRIMARY_EVENTS = tuple(event for event in EVENTS if event != "recovery")
 
 
 def stamp():
@@ -41,6 +53,10 @@ class Rules(BaseModel):
   loss_enabled: bool = True
   loss_threshold_pct: float = Field(default=3.0, ge=0.01, le=100)
   state_enabled: bool = False
+  trade_error_enabled: bool = False
+  exchange_error_enabled: bool = False
+  recovery_enabled: bool = False
+  exchange_grace_minutes: int = Field(default=2, ge=1, le=30)
   cooldown_minutes: int = Field(default=60, ge=5, le=1440)
 
 
@@ -101,7 +117,15 @@ def send_bark(destination, title, body, role):
 
 
 def empty_runtime():
-  return {"rules": {}, "history": [], "last_checked_at": None, "roi_pct": None, "bot_state": None, "error": None}
+  return {
+    "rules": {},
+    "history": [],
+    "last_checked_at": None,
+    "roi_pct": None,
+    "bot_state": None,
+    "error": None,
+    "operational": empty_operational(),
+  }
 
 
 class BarkStore:
@@ -157,7 +181,8 @@ class BarkStore:
       if (
         runtime.get("roi_pct") is not None
         and not math.isfinite(runtime["roi_pct"])
-        or runtime.get("error") not in (None, "bark_bot_not_ready", "bark_metrics_unavailable")
+        or runtime.get("error")
+        not in (None, "bark_bot_not_ready", "bark_metrics_unavailable", "bark_health_unavailable")
         or runtime.get("last_checked_at") is not None
         and not isinstance(runtime["last_checked_at"], str)
         or runtime.get("bot_state") is not None
@@ -165,6 +190,7 @@ class BarkStore:
         or len(runtime["history"]) > 20
       ):
         raise ValueError()
+      validate_operational(runtime.setdefault("operational", empty_operational()))
       for item in runtime["history"]:
         if (
           not isinstance(item, dict)
@@ -172,6 +198,7 @@ class BarkStore:
           or type(item.get("success")) is not bool
           or not isinstance(item.get("at"), str)
           or item.get("error") not in (None, "bark_delivery_failed")
+          or not valid_context(item.get("context"))
         ):
           raise ValueError()
       # Runtime corruption must not silently reset deduplication and cause a flood.
@@ -216,16 +243,25 @@ class BarkStore:
         destination_parts(destination)
       destination = "" if body.clear_destination else destination or data["destination"]
       settings = Rules.model_validate({key: getattr(body, key) for key in Rules.model_fields}).model_dump()
-      if settings["enabled"] and (not destination or not any(settings[f"{event}_enabled"] for event in EVENTS)):
+      if settings["enabled"] and (
+        not destination or not any(settings[f"{event}_enabled"] for event in PRIMARY_EVENTS)
+      ):
         raise AccountError("bark_missing_rule_or_destination")
       old = data["settings"]
       if destination != data["destination"] or settings["enabled"] != old["enabled"]:
         data["runtime"] = {**empty_runtime(), "history": data["runtime"]["history"]}
+        data["runtime"]["operational"]["trade_since"] = time.time()
       else:
         for event in EVENTS:
           keys = (f"{event}_enabled", f"{event}_threshold_pct")
           if any(settings.get(key) != old.get(key) for key in keys):
             data["runtime"]["rules"].pop(event, None)
+            if event == "trade_error":
+              data["runtime"]["operational"].update(trade_since=time.time(), trades=[])
+            elif event == "exchange_error":
+              data["runtime"]["operational"].update(faults={}, outage=None, recovery=None)
+            elif event == "recovery":
+              data["runtime"]["operational"]["recovery"] = None
       data.update(destination=destination, settings=settings, revision=data["revision"] + 1, updated_at=stamp())
       self.write(data)
       return data
@@ -241,12 +277,18 @@ def public_settings(data, role):
     "role": role,
     "destination_configured": bool(data["destination"]),
     "check_interval_seconds": INTERVAL_SECONDS,
+    "operational_events_supported": True,
     "last_checked_at": runtime.get("last_checked_at"),
     "roi_pct": runtime.get("roi_pct"),
     "bot_state": runtime.get("bot_state"),
     "monitor_error": runtime.get("error"),
     "history": [
-      {key: item.get(key) for key in ("at", "event", "success", "error")} for item in runtime["history"][-20:][::-1]
+      {key: item.get(key) for key in ("at", "event", "success", "error", "context")}
+      for item in runtime["history"][-20:][::-1]
+    ],
+    "active_incidents": [
+      {key: item.get(key) for key in ("code", "operation", "pair", "since", "at")}
+      for item in list(runtime["operational"]["faults"].values())[:10]
     ],
   }
 
@@ -276,8 +318,9 @@ def profit_snapshot():
 
 
 class BarkMonitor:
-  def __init__(self, store, role, sample=profit_snapshot, send=send_bark, now=time.time):
+  def __init__(self, store, role, sample=profit_snapshot, send=send_bark, now=time.time, operations=None):
     self.store, self.role, self.sample, self.send, self.now = store, role, sample, send, now
+    self.operations = operations or (lambda: {"observations": {}, "trades": []})
 
   def tick(self):
     # Keep all exchange/HTTP operations away from the trading loop and API event loop.
@@ -293,6 +336,12 @@ class BarkMonitor:
           raise ValueError()
       except Exception:
         snapshot, error = None, "bark_metrics_unavailable"
+      operations = None
+      if before["settings"]["trade_error_enabled"] or before["settings"]["exchange_error_enabled"]:
+        try:
+          operations = self.operations()
+        except Exception:
+          error = error or "bark_health_unavailable"
       pending = []
       with self.store.exclusive():
         data = self.store.read()
@@ -300,6 +349,7 @@ class BarkMonitor:
           return
         settings, runtime = data["settings"], data["runtime"]
         runtime.update(last_checked_at=stamp(), error=error)
+        conditions = {}
         if snapshot is not None:
           previous = runtime.get("bot_state")
           runtime.update(snapshot)
@@ -308,25 +358,29 @@ class BarkMonitor:
             "loss": snapshot["roi_pct"] <= -settings["loss_threshold_pct"],
             "state": previous is not None and previous != snapshot["bot_state"],
           }
-          for event, triggered in conditions.items():
-            if not settings[f"{event}_enabled"]:
-              continue
-            rule = runtime["rules"].setdefault(event, {"latched": False, "last_attempt": 0})
-            if event == "state":
-              rule.setdefault("baseline", previous if previous is not None else snapshot["bot_state"])
-              triggered = rule["baseline"] != snapshot["bot_state"]
-            if not triggered:
-              rule["latched"] = False
-              rule.pop("retry_at", None)
-              continue
-            eligible_at = rule.get("retry_at", rule["last_attempt"] + settings["cooldown_minutes"] * 60)
-            if rule["latched"] or self.now() < eligible_at:
-              continue
-            # Claim before sending; persisted claims survive restarts and prevent concurrent duplicates.
-            rule.update(latched=True, last_attempt=self.now())
-            if event == "state":
-              rule["pending_state"] = snapshot["bot_state"]
-            pending.append(event)
+        if operations is not None:
+          conditions.update(advance_operational(runtime, operations, settings, self.now()))
+        for event, triggered in conditions.items():
+          if not settings[f"{event}_enabled"]:
+            continue
+          rule = runtime["rules"].setdefault(event, {"latched": False, "last_attempt": 0})
+          if event == "state":
+            rule.setdefault("baseline", previous if previous is not None else snapshot["bot_state"])
+            triggered = rule["baseline"] != snapshot["bot_state"]
+          if not triggered:
+            rule["latched"] = False
+            rule.pop("retry_at", None)
+            continue
+          eligible_at = rule.get("retry_at", rule["last_attempt"] + settings["cooldown_minutes"] * 60)
+          if rule["latched"] or self.now() < eligible_at:
+            continue
+          # Persist claims before HTTP; collectors never send from the trading loop.
+          rule.update(latched=True, last_attempt=self.now())
+          if event == "state":
+            rule["pending_state"] = snapshot["bot_state"]
+          elif event in INCIDENT_EVENTS:
+            claim_incident(rule, runtime["operational"], event)
+          pending.append(event)
         self.store.write(data)
       for event in pending:
         with self.store.exclusive():
@@ -335,17 +389,22 @@ class BarkMonitor:
             return
         label = "模拟盘" if self.role == "paper" else "实盘"
         names = {"profit": "收益达标", "loss": "亏损预警", "state": "机器人状态变化"}
-        body = f"交易累计收益率 {snapshot['roi_pct']:+.2f}%（含持仓浮盈亏及手续费）"
-        if event == "state":
-          body += f"\n机器人状态：{snapshot['bot_state']}"
+        context = None
+        if event in INCIDENT_EVENTS:
+          names[event], body = incident_message(data["runtime"]["operational"], event, self.now())
+          context = incident_context(data["runtime"]["operational"], event)
         else:
-          body += f"\n设定阈值：{'+' if event == 'profit' else '-'}{settings[f'{event}_threshold_pct']:g}%"
-        self.deliver(data, event, f"NFI {label} · {names[event]}", body)
+          body = f"交易累计收益率 {snapshot['roi_pct']:+.2f}%（含持仓浮盈亏及手续费）"
+          if event == "state":
+            body += f"\n机器人状态：{snapshot['bot_state']}"
+          else:
+            body += f"\n设定阈值：{'+' if event == 'profit' else '-'}{settings[f'{event}_threshold_pct']:g}%"
+        self.deliver(data, event, f"NFI {label} · {names[event]}", body, context)
     except Exception:
       # Notification faults must never interrupt trading or kill future monitoring ticks.
       return
 
-  def deliver(self, data, event, title, body):
+  def deliver(self, data, event, title, body, context=None):
     error = None
     try:
       self.send(data["destination"], title, body, self.role)
@@ -357,7 +416,8 @@ class BarkMonitor:
         return error
       runtime = current["runtime"]
       runtime["history"] = (
-        runtime["history"] + [{"at": stamp(), "event": event, "success": error is None, "error": error}]
+        runtime["history"]
+        + [{"at": stamp(), "event": event, "success": error is None, "error": error, "context": context}]
       )[-20:]
       if error and event != "test":
         # Retry failed deliveries after five minutes, without rearming successful crossings.
@@ -368,6 +428,8 @@ class BarkMonitor:
         rule.pop("retry_at", None)
         if event == "state":
           rule.update(baseline=rule.pop("pending_state"), latched=False)
+        elif event in INCIDENT_EVENTS:
+          delivered_incident(rule, runtime["operational"], event)
       self.store.write(current)
     return error
 
@@ -400,7 +462,9 @@ def configure_bark_api(app, config):
   if role not in ("paper", "live"):
     return
   store = BarkStore(config["user_data_dir"])
-  monitor = BarkMonitor(store, role)
+  from .faults import operational_snapshot
+
+  monitor = BarkMonitor(store, role, operations=lambda: operational_snapshot(config, role))
   app.state.bark_monitor = monitor
   previous_lifespan = app.router.lifespan_context
 

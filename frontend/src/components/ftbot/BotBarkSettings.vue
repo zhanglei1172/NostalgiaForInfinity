@@ -24,6 +24,10 @@ const rulesOf = (data: BarkSettings): BarkRules => ({
   loss_enabled: data.loss_enabled,
   loss_threshold_pct: data.loss_threshold_pct,
   state_enabled: data.state_enabled,
+  trade_error_enabled: data.trade_error_enabled ?? false,
+  exchange_error_enabled: data.exchange_error_enabled ?? false,
+  recovery_enabled: data.recovery_enabled ?? false,
+  exchange_grace_minutes: data.exchange_grace_minutes ?? 2,
   cooldown_minutes: data.cooldown_minutes,
 });
 const changed = computed(
@@ -43,13 +47,20 @@ const valid = computed(
     Number.isFinite(draft.value.loss_threshold_pct) &&
     draft.value.loss_threshold_pct >= 0.01 &&
     draft.value.loss_threshold_pct <= 100 &&
+    Number.isInteger(draft.value.exchange_grace_minutes) &&
+    draft.value.exchange_grace_minutes >= 1 &&
+    draft.value.exchange_grace_minutes <= 30 &&
     Number.isInteger(draft.value.cooldown_minutes) &&
     draft.value.cooldown_minutes >= 5 &&
     draft.value.cooldown_minutes <= 1440 &&
     (!draft.value.enabled ||
       ((destination.value.trim() ||
         (settings.value?.destination_configured && !clearDestination.value)) &&
-        (draft.value.profit_enabled || draft.value.loss_enabled || draft.value.state_enabled))),
+        (draft.value.profit_enabled ||
+          draft.value.loss_enabled ||
+          draft.value.state_enabled ||
+          draft.value.trade_error_enabled ||
+          draft.value.exchange_error_enabled))),
 );
 function message(code: string) {
   const messages: Record<string, string> = {
@@ -72,6 +83,8 @@ function message(code: string) {
     bark_bot_not_ready: 'Waiting for the trading account to finish initialization.',
     bark_metrics_unavailable:
       'Profit data is unavailable. Monitoring will retry without sending a threshold alert.',
+    bark_health_unavailable:
+      'Operational status is unavailable. Error monitoring will retry without assuming recovery.',
     account_invalid_request: 'Check the Bark address, thresholds and cooldown, then try again.',
   };
   return tr(messages[code] ?? 'Unable to update Bark notifications. Refresh and try again.');
@@ -121,6 +134,13 @@ async function submit(test = false) {
   busy.value = true;
   error.value = notice.value = '';
   try {
+    const rules = { ...draft.value } as Partial<BarkRules>;
+    if (!settings.value.operational_events_supported) {
+      delete rules.trade_error_enabled;
+      delete rules.exchange_error_enabled;
+      delete rules.recovery_enabled;
+      delete rules.exchange_grace_minutes;
+    }
     const data = await apiFor(id)<BarkSettings>(test ? '/bark-settings/test' : '/bark-settings', {
       method: test ? 'POST' : 'PUT',
       body: {
@@ -129,7 +149,7 @@ async function submit(test = false) {
         ...(test
           ? {}
           : {
-              ...draft.value,
+              ...rules,
               destination: destination.value,
               clear_destination: clearDestination.value,
             }),
@@ -157,8 +177,27 @@ const eventLabel = (event: string) =>
     profit: tr('Profit target reached'),
     loss: tr('Loss threshold reached'),
     state: tr('Bot state changed'),
+    trade_error: tr('Order operation failed'),
+    exchange_error: tr('Exchange connection or initialization failed'),
+    recovery: tr('Exchange connection recovered'),
     test: tr('Test notification'),
   })[event] ?? event;
+function incidentLabel(code: string) {
+  const labels: Record<string, string> = {
+    insufficient_funds: 'Insufficient exchange balance',
+    order_rejected:
+      'Exchange rejected the order. Check minimum size, precision and trading limits.',
+    order_failed: 'Order operation failed',
+    order_uncertain:
+      'Order request had a network error. The bot must reconcile its execution status.',
+    authentication: 'Exchange authentication or permission check failed',
+    rate_limited: 'Exchange rate limit reached',
+    connection: 'Exchange connection timed out or failed',
+    exchange_request: 'Exchange request failed',
+    initialization: 'Live service initialization failed. Check account settings and service logs.',
+  };
+  return tr(labels[code] ?? 'Exchange request failed');
+}
 watch(() => bots.selectedBot, load, { immediate: true });
 onBeforeUnmount(() => {
   ++generation;
@@ -256,6 +295,43 @@ onBeforeUnmount(() => {
           </div>
         </div>
         <BaseCheckbox v-model="draft.state_enabled">{{ tr('Bot state changed') }}</BaseCheckbox>
+        <template v-if="settings.operational_events_supported">
+          <BaseCheckbox v-model="draft.trade_error_enabled">{{
+            tr('Order operation failed')
+          }}</BaseCheckbox>
+          <BaseCheckbox v-model="draft.exchange_error_enabled">{{
+            tr('Exchange connection or initialization failed')
+          }}</BaseCheckbox>
+          <UFormField :label="tr('Connection alert delay (minutes)')" class="max-w-md">
+            <UInputNumber
+              v-model="draft.exchange_grace_minutes"
+              :min="1"
+              :max="30"
+              :step="1"
+              :disabled="!draft.exchange_error_enabled"
+              class="w-full"
+            />
+          </UFormField>
+          <BaseCheckbox
+            v-model="draft.recovery_enabled"
+            :disabled="!draft.exchange_error_enabled"
+            >{{ tr('Notify when an alerted connection problem recovers') }}</BaseCheckbox
+          >
+          <p class="muted text-sm leading-relaxed">
+            {{
+              tr(
+                'Order failures notify on the next check. Network and rate-limit errors wait for the configured delay; authentication and initialization errors notify on the next check. Repeated errors are grouped, and recovery requires observing the failed operations succeed.',
+              )
+            }}
+          </p>
+          <p class="muted text-sm leading-relaxed">
+            {{
+              tr(
+                'An order network error can leave execution uncertain. Notifications do not retry orders; check the exchange order status before placing another order.',
+              )
+            }}
+          </p>
+        </template>
         <UFormField :label="tr('Cooldown per event (minutes)')" class="max-w-md">
           <UInputNumber
             v-model="draft.cooldown_minutes"
@@ -346,6 +422,20 @@ onBeforeUnmount(() => {
             )
           }}
         </p>
+        <div v-if="settings.active_incidents?.length" class="space-y-2 text-sm">
+          <p class="font-semibold">{{ tr('Recorded connection problems') }}</p>
+          <ul class="space-y-1">
+            <li
+              v-for="(incident, index) in settings.active_incidents"
+              :key="index"
+              class="break-words"
+            >
+              {{ incidentLabel(incident.code)
+              }}<span v-if="incident.pair"> · {{ incident.pair }}</span> ·
+              {{ new Date(incident.since * 1000).toLocaleString() }}
+            </li>
+          </ul>
+        </div>
         <ul v-if="settings.history.length" class="space-y-2 text-sm">
           <li
             v-for="(item, index) in settings.history"
@@ -357,6 +447,10 @@ onBeforeUnmount(() => {
             <UBadge :color="item.success ? 'success' : 'error'">{{
               item.success ? tr('Accepted by Bark') : tr('Delivery failed')
             }}</UBadge>
+            <span v-if="item.context" class="basis-full break-words muted">
+              {{ incidentLabel(item.context.code)
+              }}<span v-if="item.context.pair"> · {{ item.context.pair }}</span>
+            </span>
           </li>
         </ul>
         <p v-else class="muted text-sm">{{ tr('No Bark deliveries recorded yet.') }}</p>

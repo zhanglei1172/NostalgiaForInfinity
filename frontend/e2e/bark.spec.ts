@@ -11,6 +11,10 @@ async function bark(page: Page, role: 'paper' | 'live' = 'paper') {
     loss_enabled: true,
     loss_threshold_pct: 3,
     state_enabled: false,
+    trade_error_enabled: false,
+    exchange_error_enabled: false,
+    recovery_enabled: false,
+    exchange_grace_minutes: 2,
     cooldown_minutes: 60,
     revision: 0,
     updated_at: null,
@@ -22,6 +26,8 @@ async function bark(page: Page, role: 'paper' | 'live' = 'paper') {
     bot_state: null,
     monitor_error: null,
     history: [],
+    operational_events_supported: true,
+    active_incidents: [],
   };
   const writes: { method: string; body: Record<string, unknown> }[] = [];
   await page.route('**/api/v1/bark-settings{,/test}', (route) => {
@@ -178,3 +184,70 @@ test('Bark origin rejection explains how to access the correct bot', async ({ pa
   await expect(panel.getByRole('alert')).toContainText('反向代理');
   await expect(panel.getByLabel('管理员密码（Bark 设置验证）', { exact: true })).toHaveValue('');
 });
+
+for (const width of [1440, 390]) {
+  test(`admin configures order and connection alerts with recovery at ${width}px`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width, height: 1000 });
+    const { panel, settings, writes, trading } = await bark(page, 'live');
+    await panel.getByRole('switch', { name: '开启 Bark 通知', exact: true }).click();
+    await panel.getByRole('checkbox', { name: '收益达标', exact: true }).uncheck();
+    await panel.getByRole('checkbox', { name: '亏损达标', exact: true }).uncheck();
+    await panel.getByRole('checkbox', { name: '订单操作失败', exact: true }).check();
+    await panel.getByRole('checkbox', { name: '交易所连接或初始化失败', exact: true }).check();
+    await panel.getByRole('checkbox', { name: '已告警的连接问题恢复时通知', exact: true }).check();
+    await panel
+      .getByRole('spinbutton', { name: '连接异常通知延迟（分钟）', exact: true })
+      .fill('3');
+    await panel
+      .getByLabel('Bark 推送地址', { exact: true })
+      .fill('https://bark.fixture.test/device-key');
+    await panel
+      .getByLabel('管理员密码（Bark 设置验证）', { exact: true })
+      .fill('fixture-bark-admin-password');
+    await panel.getByRole('button', { name: '保存 Bark 设置', exact: true }).click();
+    await expect(panel.getByRole('status')).toContainText('Bark 通知设置已保存');
+    expect(writes.at(-1)?.body).toMatchObject({
+      profit_enabled: false,
+      loss_enabled: false,
+      trade_error_enabled: true,
+      exchange_error_enabled: true,
+      recovery_enabled: true,
+      exchange_grace_minutes: 3,
+    });
+    settings.history = [
+      {
+        at: new Date().toISOString(),
+        event: 'trade_error',
+        success: true,
+        error: null,
+        context: { code: 'order_uncertain', operation: 'create_order', pair: 'BTC/USDT', count: 1 },
+      },
+    ];
+    settings.active_incidents = [
+      {
+        code: 'authentication',
+        operation: 'get_balances',
+        pair: null,
+        since: Date.now() / 1000,
+        at: Date.now() / 1000,
+      },
+    ];
+    await panel.getByRole('button', { name: '刷新 Bark 设置', exact: true }).click();
+    await expect(panel.getByText('已记录的连接异常', { exact: true })).toBeVisible();
+    await expect(panel.getByRole('listitem').filter({ hasText: '交易所身份验证或权限检查失败' })).toBeVisible();
+    await expect(
+      panel.getByText('订单请求发生网络异常，执行结果尚待机器人核对。', { exact: false }),
+    ).toBeVisible();
+    expect(await page.evaluate(() => JSON.stringify(localStorage))).not.toMatch(
+      /device-key|fixture-bark-admin-password/,
+    );
+    expect(
+      trading.filter(({ endpoint }) => !['token/login', 'pair_candles'].includes(endpoint)),
+    ).toEqual([]);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
+      true,
+    );
+  });
+}

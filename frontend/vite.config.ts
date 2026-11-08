@@ -7,7 +7,7 @@ import IconsResolve from 'unplugin-icons/resolver';
 import Icons from 'unplugin-icons/vite';
 import VueRouter from 'vue-router/vite';
 
-const commitHash = '4e1717a+nfi-ui.13';
+const commitHash = '4e1717a+nfi-ui.14';
 
 // https://vitejs.dev/config/
 export default defineConfig({
