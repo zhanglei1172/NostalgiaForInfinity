@@ -1,0 +1,97 @@
+name: Chinese UI
+
+on:
+  push:
+    paths:
+      - "frontend/**"
+      - "docker/Dockerfile.custom"
+      - "docker/install-account.py"
+      - "webserver_extensions/**"
+      - "tests/account/**"
+      - "tests/research/**"
+      - "tests/live/**"
+      - "tools/prepare_live.py"
+      - "docker-compose.live.yml"
+      - "configs/exampleconfig.json"
+      - "configs/blacklist-binance.json"
+      - "configs/blacklist-okx.json"
+      - "configs/paper-okx.json"
+      - "docker-compose.proxy.yml"
+      - "docker-compose.live-proxy.yml"
+      - "configs/research.json"
+      - "docker-compose.override.yml"
+      - ".github/workflows/frontend.yml"
+  pull_request:
+    paths:
+      - "frontend/**"
+      - "docker/Dockerfile.custom"
+      - "docker/install-account.py"
+      - "webserver_extensions/**"
+      - "tests/account/**"
+      - "tests/research/**"
+      - "tests/live/**"
+      - "tools/prepare_live.py"
+      - "docker-compose.live.yml"
+      - "configs/exampleconfig.json"
+      - "configs/blacklist-binance.json"
+      - "configs/blacklist-okx.json"
+      - "configs/paper-okx.json"
+      - "docker-compose.proxy.yml"
+      - "docker-compose.live-proxy.yml"
+      - "configs/research.json"
+      - "docker-compose.override.yml"
+      - ".github/workflows/frontend.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: frontend/package.json
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "26"
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm lint-ci
+      - run: pnpm test:unit
+      - run: pnpm build
+      - run: pnpm typecheck
+      - run: pnpm exec playwright install --with-deps chromium
+      - run: pnpm test:e2e
+  account-api:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - run: docker pull freqtradeorg/freqtrade:stable
+      - name: Check API installation, authentication and research gateway
+        run: |
+          docker run --rm --network none -w /extensions \
+            -e PYTHONPATH=/extensions:/freqtrade -e PYTHONDONTWRITEBYTECODE=1 \
+            -v "$PWD/webserver_extensions:/extensions:ro" \
+            -v "$PWD/tests/account:/account-tests:ro" \
+            -v "$PWD/tests/research:/research-tests:ro" \
+            -v "$PWD/docker/install-account.py:/tmp/install-account.py:ro" \
+            --entrypoint /bin/sh freqtradeorg/freqtrade:stable -c \
+            'python /tmp/install-account.py && python -m unittest discover -s /account-tests -v && python -m unittest discover -s /research-tests -v && python /account-tests/startup_runtime_smoke.py'
+      - name: Validate Web account setup and independent live configuration without exchange access
+        run: |
+          docker compose -f docker-compose.live.yml -p nfi-live config --quiet
+          docker run --rm --network none -w /live-tools \
+            -e PYTHONPATH=/extensions:/live-tools:/freqtrade -e PYTHONDONTWRITEBYTECODE=1 \
+            -v "$PWD/webserver_extensions:/extensions:ro" \
+            -v "$PWD/tools/prepare_live.py:/live-tools/prepare_live.py:ro" \
+            -v "$PWD/tests/live:/live-tests:ro" \
+            -v "$PWD/configs:/live-configs:ro" \
+            -v "$PWD/NostalgiaForInfinityX8.py:/live-strategy.py:ro" \
+            --entrypoint python freqtradeorg/freqtrade:stable \
+            -m unittest discover -s /live-tests -v

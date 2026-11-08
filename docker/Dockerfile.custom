@@ -1,5 +1,17 @@
 ARG sourceimage=freqtradeorg/freqtrade
 ARG sourcetag=stable
+ARG nodeimage=node
+ARG nodetag=26-bookworm-slim
+
+# Compile the pinned FreqUI fork with Chinese and English interface text.
+FROM ${nodeimage}:${nodetag} AS ui-builder
+WORKDIR /ui
+RUN npm install --global pnpm@12.14.0
+COPY frontend/package.json frontend/pnpm-lock.yaml frontend/pnpm-workspace.yaml ./
+RUN --mount=type=cache,target=/pnpm/store \
+    pnpm install --frozen-lockfile --store-dir=/pnpm/store
+COPY frontend/ ./
+RUN pnpm build
 
 # Stage 1: Build dependencies
 FROM ${sourceimage}:${sourcetag} AS builder
@@ -21,9 +33,19 @@ RUN chown -R 1000:1000 /home/ftuser/.local
 FROM ${sourceimage}:${sourcetag}
 
 USER root
+ENV PYTHONPATH=/freqtrade
 
 COPY --from=builder /home/ftuser/.local /home/ftuser/.local
 COPY --chown=1000:1000 tests/requirements.txt /freqtrade/
+
+RUN rm -rf /freqtrade/freqtrade/rpc/api_server/ui/installed
+COPY --from=ui-builder --chown=1000:1000 /ui/dist/ /freqtrade/freqtrade/rpc/api_server/ui/installed/
+
+COPY --chown=1000:1000 webserver_extensions/nfi_account/ /freqtrade/nfi_account/
+COPY --chown=1000:1000 webserver_extensions/nfi_research/ /freqtrade/nfi_research/
+COPY --chown=1000:1000 webserver_extensions/nfi_live/ /freqtrade/nfi_live/
+COPY docker/install-account.py /tmp/install-account.py
+RUN python /tmp/install-account.py && rm /tmp/install-account.py
 
 USER ftuser
 

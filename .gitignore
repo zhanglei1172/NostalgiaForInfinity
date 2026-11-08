@@ -141,6 +141,16 @@ user_data/data/*.json
 user_data/data/*.json
 
 user_data/*.json
+user_data/.nfi-bark*
+user_data/.nfi-auth-*
+user_data/.nfi-account*
+user_data/research/
+user_data/research-okx/
+user_data/recipes/
+user_data/live/
+user_data/live-okx/
+user_data/recipes-okx/
+user_data/backups/
 user_data/data/*/*.json
 user_data/data/*/*.json.gz
 user_data/data
@@ -165,3 +175,12 @@ config*.json
 *.sqlite-shm
 *.sqlite-wal
 .env**
+
+# FreqUI development and build artifacts
+frontend/node_modules/
+frontend/dist/
+frontend/playwright-report/
+frontend/test-results/
+frontend/src/auto-imports.d.ts
+frontend/src/components.d.ts
+frontend/src/typed-router.d.ts

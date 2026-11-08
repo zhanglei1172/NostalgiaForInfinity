@@ -45,6 +45,8 @@ nav:
   - Installation (Simple):
       - With Docker: installation/docker.md
       - Without Docker: installation/without-docker.md
+      - 中文管理后台: installation/chinese-ui.md
+      - OKX 现货实盘准备: installation/live-okx-spot.md
 
   - Project Overview:
       - Overview: project-overview.md

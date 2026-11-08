@@ -1,0 +1,95 @@
+{
+  "add_config_files": [
+    "blacklist-okx.json"
+  ],
+  "dry_run": true,
+  "dry_run_wallet": 10000,
+  "stake_currency": "USDT",
+  "stake_amount": "unlimited",
+  "tradable_balance_ratio": 0.99,
+  "max_open_trades": 6,
+  "fee": 0.001,
+  "timeframe": "5m",
+  "use_exit_signal": true,
+  "exit_profit_only": false,
+  "ignore_roi_if_entry_signal": true,
+  "strategy_path": "/freqtrade/strategies",
+  "trading_mode": "spot",
+  "margin_mode": "",
+  "fiat_display_currency": "",
+  "exchange": {
+    "name": "okx",
+    "key": "",
+    "secret": "",
+    "pair_whitelist": [
+      "BTC/USDT",
+      "ETH/USDT",
+      "SOL/USDT",
+      "XRP/USDT",
+      "DOGE/USDT",
+      "ADA/USDT",
+      "TRX/USDT",
+      "LINK/USDT",
+      "LTC/USDT",
+      "BCH/USDT",
+      "AVAX/USDT",
+      "SUI/USDT",
+      "DOT/USDT",
+      "UNI/USDT",
+      "AAVE/USDT",
+      "NEAR/USDT",
+      "ICP/USDT",
+      "ETC/USDT",
+      "FIL/USDT",
+      "ATOM/USDT",
+      "XLM/USDT",
+      "HBAR/USDT",
+      "ALGO/USDT",
+      "POL/USDT",
+      "INJ/USDT",
+      "OP/USDT",
+      "ARB/USDT",
+      "GRT/USDT",
+      "FET/USDT",
+      "CRV/USDT",
+      "APT/USDT",
+      "SEI/USDT",
+      "DYDX/USDT",
+      "SAND/USDT",
+      "MANA/USDT",
+      "IMX/USDT",
+      "LDO/USDT",
+      "COMP/USDT",
+      "ZEC/USDT",
+      "ENS/USDT"
+    ]
+  },
+  "pairlists": [
+    {
+      "method": "StaticPairList"
+    }
+  ],
+  "entry_pricing": {
+    "price_side": "other",
+    "use_order_book": false
+  },
+  "exit_pricing": {
+    "price_side": "other",
+    "use_order_book": false
+  },
+  "unfilledtimeout": {
+    "entry": 3,
+    "exit": 2,
+    "unit": "minutes"
+  },
+  "api_server": {
+    "enabled": true,
+    "listen_ip_address": "0.0.0.0",
+    "listen_port": 8080
+  },
+  "telegram": {
+    "enabled": false,
+    "token": "",
+    "chat_id": ""
+  }
+}

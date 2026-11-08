@@ -1,0 +1,18 @@
+# Optional companion to docker-compose.live.yml (Linux, local HTTP proxy).
+services:
+  proxy-relay:
+    image: nfi-paper:live-candidate
+    pull_policy: never
+    restart: unless-stopped
+    network_mode: host
+    entrypoint: ["python", "-m", "nfi_research.proxy_relay"]
+    environment:
+      NFI_PROXY_LISTEN_PORT: "17891"
+      NFI_PROXY_BIND: ${NFI_PROXY_BIND:-172.17.0.1}
+      NFI_PROXY_HOST_PORT: ${NFI_PROXY_HOST_PORT:-7890}
+  freqtrade-live:
+    environment:
+      FREQTRADE__EXCHANGE__CCXT_CONFIG__httpsProxy: http://host.docker.internal:17891
+      FREQTRADE__EXCHANGE__CCXT_ASYNC_CONFIG__httpsProxy: http://host.docker.internal:17891
+    extra_hosts: ["host.docker.internal:host-gateway"]
+    depends_on: [proxy-relay]

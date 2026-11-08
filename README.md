@@ -7,6 +7,9 @@
 Full documentation is available online at:  
 👉 [https://iterativv.github.io/NostalgiaForInfinity/](https://iterativv.github.io/NostalgiaForInfinity/)
 
+中文管理后台：Docker 镜像包含默认简体中文、可切换 English 的 FreqUI。
+安装与更新方式见 [中文后台说明](docs/installation/chinese-ui.md)，前端源码见 [frontend/](frontend/README.md)。
+
 ## Introduction
 
 Trading strategy for the [Freqtrade](https://www.freqtrade.io) crypto bot. For backtesting results, check out the comments in the individual [commit](https://github.com/iterativv/NostalgiaForInfinity/commits/main) page.

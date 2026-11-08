@@ -1,0 +1,16 @@
+{
+  "add_config_files": [
+    "blacklist-okx.json"
+  ],
+  "exchange": {
+    "name": "okx",
+    "key": "",
+    "secret": "",
+    "password": "",
+    "pair_whitelist": []
+  },
+  "trading_mode": "spot",
+  "margin_mode": "",
+  "initial_state": "stopped",
+  "bot_name": "NFI_Paper_OKX"
+}

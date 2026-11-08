@@ -1,0 +1,20 @@
+{
+  "max_open_trades": 6,
+  "tradable_balance_ratio": 0.99,
+  "pair_limit": 40,
+  "min_age_days": 60,
+  "min_quote_volume": 5000000,
+  "max_spread_ratio": 0.005,
+  "fee": 0.001,
+  "max_slippage": 0.02,
+  "research_pairs": [
+    "BTC/USDT", "ETH/USDT", "SOL/USDT", "XRP/USDT", "DOGE/USDT",
+    "ADA/USDT", "TRX/USDT", "LINK/USDT", "LTC/USDT", "BCH/USDT",
+    "AVAX/USDT", "SUI/USDT", "DOT/USDT", "UNI/USDT", "AAVE/USDT",
+    "NEAR/USDT", "ICP/USDT", "ETC/USDT", "FIL/USDT", "ATOM/USDT",
+    "XLM/USDT", "HBAR/USDT", "ALGO/USDT", "VET/USDT", "INJ/USDT",
+    "OP/USDT", "ARB/USDT", "GRT/USDT", "FET/USDT", "CRV/USDT",
+    "APT/USDT", "SEI/USDT", "RUNE/USDT", "SAND/USDT", "MANA/USDT",
+    "IMX/USDT", "LDO/USDT", "QNT/USDT", "CAKE/USDT", "ENS/USDT"
+  ]
+}

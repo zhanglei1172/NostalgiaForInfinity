@@ -1,0 +1,40 @@
+# Use explicitly: docker compose -f docker-compose.live.yml -p nfi-live ...
+# Web setup stores account credentials and budget privately; no account values in Compose.
+services:
+  freqtrade-live:
+    image: nfi-paper:live-candidate
+    pull_policy: never
+    restart: unless-stopped
+    stop_grace_period: 40s
+    dns:
+      - ${NFI_DNS_SERVER:-1.1.1.1}
+    environment:
+      NFI_RECIPE_ROLE: live
+      NFI_RESEARCH_URL: http://backtesting:8080
+      # Internal research-service authentication, separate from the live Web administrator.
+      NFI_RESEARCH_USERNAME: ${FREQTRADE__API_SERVER__USERNAME:-paper}
+      NFI_RESEARCH_PASSWORD: ${FREQTRADE__API_SERVER__PASSWORD:-}
+      # Safe fallback; only a container boot may apply the saved Web auto-start preference.
+      FREQTRADE__INITIAL_STATE: stopped
+    networks:
+      - default
+      - research
+    ports:
+      - "127.0.0.1:18081:8080"
+    volumes:
+      - ./user_data/live-okx:/freqtrade/user_data
+      - ./configs:/opt/nfi/configs:ro
+      - ./user_data/recipes-okx:/opt/nfi/recipes:ro
+      - ./NostalgiaForInfinityX8.py:/opt/nfi/NostalgiaForInfinityX8.py:ro
+    entrypoint: ["python", "-m", "nfi_live"]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:8080/api/v1/ping"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+networks:
+  research:
+    name: ${NFI_RESEARCH_NETWORK:-nfi-research}
+    external: true

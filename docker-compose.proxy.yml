@@ -1,0 +1,24 @@
+# Optional Linux-only relay when an HTTP proxy listens on the host at 127.0.0.1:7890.
+# Add this file LAST to the paper Compose command. For live use docker-compose.live-proxy.yml.
+x-exchange-proxy: &exchange-proxy
+  FREQTRADE__EXCHANGE__CCXT_CONFIG__httpsProxy: http://host.docker.internal:17890
+  FREQTRADE__EXCHANGE__CCXT_ASYNC_CONFIG__httpsProxy: http://host.docker.internal:17890
+
+services:
+  proxy-relay:
+    image: nfi-paper:local
+    pull_policy: never
+    restart: unless-stopped
+    network_mode: host
+    entrypoint: ["python", "-m", "nfi_research.proxy_relay"]
+    environment:
+      NFI_PROXY_BIND: ${NFI_PROXY_BIND:-172.17.0.1}
+      NFI_PROXY_HOST_PORT: ${NFI_PROXY_HOST_PORT:-7890}
+  freqtrade:
+    environment: *exchange-proxy
+    extra_hosts: ["host.docker.internal:host-gateway"]
+    depends_on: [proxy-relay]
+  backtesting:
+    environment: *exchange-proxy
+    extra_hosts: ["host.docker.internal:host-gateway"]
+    depends_on: [proxy-relay]

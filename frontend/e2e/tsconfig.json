@@ -1,0 +1,16 @@
+{
+  "extends": "../tsconfig.app.json",
+  "compilerOptions": {
+    "sourceMap": false,
+    "types": ["node", "vite/client"]
+  },
+  "include": [
+    "*.ts",
+    "*.tsx",
+    "../src/types/recipe.ts",
+    "../src/types/activity.ts",
+    "../src/types/live.ts",
+    "../src/types/startup.ts",
+    "../src/types/bark.ts"
+  ]
+}
