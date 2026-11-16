@@ -76,7 +76,7 @@ def resolve_credentials(payload, existing=None):
   return result
 
 
-def check_connection(credentials, transport):
+def check_connection(credentials, transport, directory=None):
   """Read OKX trading-account identity and USDT balance. Never submit an order."""
   try:
     client = ccxt.okx(
@@ -91,6 +91,10 @@ def check_connection(credentials, transport):
         "options": {"defaultType": "spot", "fetchMarkets": {"types": ["spot"]}},
       }
     )
+    if directory is not None:
+      from nfi_account.proxy import configure_account_client
+
+      configure_account_client(client, directory)
     identity = client.private_get_account_config()
     uid = str(identity["data"][0]["uid"])
     if not re.fullmatch(r"[0-9]{1,40}", uid):
@@ -181,12 +185,12 @@ def save_settings(store, config, manager, payload):
       raise LiveError("live_revision_conflict", 409)
     credentials = resolve_credentials(payload, (existing or {}).get("exchange"))
     transport = config.get("exchange", {}).get("ccxt_config", {})
-    balance = check_connection(credentials, transport)
+    balance = check_connection(credentials, transport, store.directory)
     counts = store.database_counts()
     if existing and counts["trades"]:
       previous_uid = existing.get("nfi_live_account", {}).get("uid")
       if not previous_uid:
-        previous_uid = check_connection(existing["exchange"], transport)["uid"]
+        previous_uid = check_connection(existing["exchange"], transport, store.directory)["uid"]
       if previous_uid != balance["uid"]:
         raise LiveError("live_account_has_history", 409)
     if existing and (counts["open_trades"] or counts["open_orders"]):
@@ -283,7 +287,7 @@ def configure_live_api(app, config):
     with CONTROL_LOCK:
       existing = store.profile()
       keys = resolve_credentials(body, (existing or {}).get("exchange"))
-    return check_connection(keys, config.get("exchange", {}).get("ccxt_config", {}))
+    return check_connection(keys, config.get("exchange", {}).get("ccxt_config", {}), store.directory)
 
   @router.put("")
   def save(body: SaveSettings, request: Request, manager: Annotated[AccountManager, Depends(account_manager)]):

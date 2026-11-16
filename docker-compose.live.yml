@@ -8,6 +8,8 @@ services:
     stop_grace_period: 40s
     dns:
       - ${NFI_DNS_SERVER:-1.1.1.1}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     environment:
       NFI_RECIPE_ROLE: live
       NFI_RESEARCH_URL: http://backtesting:8080

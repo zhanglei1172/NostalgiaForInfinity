@@ -228,4 +228,7 @@ def configure_account_api(app, config):
   from .bark import configure_bark_api
 
   configure_bark_api(app, config)
+  from .proxy_api import configure_proxy_api
+
+  configure_proxy_api(app, config)
   return manager

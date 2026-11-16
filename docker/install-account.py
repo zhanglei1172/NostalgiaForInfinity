@@ -51,4 +51,12 @@ if marker not in source:
   source = source.replace(anchor, f"        {marker}\n        install_fault_hooks(self._config)\n" + anchor)
 compile(source, str(path), "exec")
 path.write_text(source)
-print("NFI account, research, recipe, startup and notification hooks installed")
+# Install private exchange transports before constructing any sync, async or WS client.
+marker = "from nfi_account.proxy import prepare_proxy"
+if marker not in source:
+  if source.count(anchor) != 1:
+    raise RuntimeError("Unsupported Freqtrade worker layout: review proxy integration")
+  source = source.replace(anchor, f"        {marker}\n        prepare_proxy(self._config)\n" + anchor)
+compile(source, str(path), "exec")
+path.write_text(source)
+print("NFI account, research, recipe, startup, notification and proxy hooks installed")

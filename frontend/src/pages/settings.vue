@@ -38,6 +38,7 @@ const colorPreferenceOptions = [
       <UButton to="/account" icon="i-mdi-account-lock-outline">{{ tr('Manage account') }}</UButton>
     </div>
     <BotStartupSettings />
+    <BotProxySettings />
     <BotBarkSettings />
     <UCard class="max-w-4xl">
       <template #header

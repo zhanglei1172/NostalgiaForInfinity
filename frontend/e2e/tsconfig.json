@@ -11,6 +11,7 @@
     "../src/types/activity.ts",
     "../src/types/live.ts",
     "../src/types/startup.ts",
-    "../src/types/bark.ts"
+    "../src/types/bark.ts",
+    "../src/types/proxy.ts"
   ]
 }
