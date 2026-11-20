@@ -105,8 +105,13 @@ watch(selectedHistory, (value) => {
               }}
             </p>
             <p>
-              {{ research.info.exchange }} · {{ tr('Spot') }} · 5m ·
+              {{ research.info.exchange }} ·
+              {{ tr(research.info.trading_mode === 'futures' ? 'Isolated futures' : 'Spot') }} · 5m
+              ·
               {{ research.info.stake_currency }}
+              <span v-if="research.info.trading_mode === 'futures'">
+                · {{ research.info.leverage }}x</span
+              >
             </p>
             <p>{{ tr('Tested pairs') }}: {{ research.info.pairs.join(', ') }}</p>
             <p>

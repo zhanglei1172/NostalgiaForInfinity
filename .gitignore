@@ -149,6 +149,7 @@ user_data/research-okx/
 user_data/recipes/
 user_data/live/
 user_data/live-okx/
+user_data/bots/
 user_data/recipes-okx/
 user_data/backups/
 user_data/data/*/*.json

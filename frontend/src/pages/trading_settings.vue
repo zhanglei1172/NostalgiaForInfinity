@@ -10,6 +10,9 @@ const info = ref<LiveSettings>();
 const balance = ref<LiveBalance>();
 const label = ref('OKX');
 const capital = ref<number>();
+const tradingMode = ref<'spot' | 'futures'>('spot');
+const leverage = ref(1);
+const confirmFutures = ref(false);
 const key = ref('');
 const secret = ref('');
 const passphrase = ref('');
@@ -41,6 +44,11 @@ const valid = computed(
     label.value.trim() &&
     Number.isFinite(capital.value) &&
     (capital.value ?? 0) >= 100 &&
+    (tradingMode.value !== 'futures' ||
+      (Number.isFinite(leverage.value) &&
+        leverage.value >= 1 &&
+        leverage.value <= 5 &&
+        confirmFutures.value)) &&
     password.value.length > 0,
 );
 function api() {
@@ -58,6 +66,7 @@ function credentials() {
     api_key: key.value || undefined,
     api_secret: secret.value || undefined,
     passphrase: passphrase.value || undefined,
+    trading_mode: tradingMode.value,
   };
 }
 function failure(value: unknown) {
@@ -78,6 +87,16 @@ function failure(value: unknown) {
       'This database contains trades for another OKX account. Use a separate deployment for the new account.',
     live_capital_has_positions:
       'Close positions and resolve open orders before changing the initial budget.',
+    live_instance_mode_locked:
+      'The trading mode is fixed for this deployment. Create a separate instance to use another mode.',
+    live_mode_has_history:
+      'This instance already has trades. Use a separate instance for another trading mode.',
+    live_trading_has_positions:
+      'Close positions and resolve open orders before changing leverage or trading mode.',
+    live_futures_confirmation_required:
+      'Confirm isolated futures trading before saving these settings.',
+    live_futures_account_required:
+      'Enable an OKX account mode that supports futures in OKX before configuring this instance.',
     live_database_unavailable:
       'The trading database is temporarily unavailable. Retry after the service finishes loading.',
     account_guard_unavailable:
@@ -114,6 +133,9 @@ async function load(reset = false) {
     if (reset) {
       label.value = data.account_label;
       capital.value = data.available_capital ?? undefined;
+      tradingMode.value = data.trading_mode ?? 'spot';
+      leverage.value = data.leverage ?? 1;
+      confirmFutures.value = false;
     }
     if (pending.value && data.phase === 'ready' && data.runtime_revision === data.revision) {
       pending.value = false;
@@ -156,9 +178,16 @@ async function save() {
   if (
     !(await confirm({
       title: tr('Apply trading account settings'),
-      message: tr(
-        'Validate the account and apply these settings? The service will reload in stopped state. Existing trade records are preserved.',
-      ),
+      message:
+        tr(
+          'Validate the account and apply these settings? The service will reload in stopped state. Existing trade records are preserved.',
+        ) +
+        '\n' +
+        tr('Target bot: {name} · {mode} · {leverage}x', {
+          name: bots.activeBot.uiBotName,
+          mode: tr(tradingMode.value === 'futures' ? 'Isolated futures' : 'Spot'),
+          leverage: tradingMode.value === 'futures' ? leverage.value : 1,
+        }),
     }))
   )
     return;
@@ -175,6 +204,8 @@ async function save() {
         revision: info.value.revision,
         account_label: label.value,
         available_capital: capital.value,
+        leverage: leverage.value,
+        confirm_futures: confirmFutures.value,
         current_password: password.value,
       },
     });
@@ -182,6 +213,7 @@ async function save() {
     balance.value = result.balance;
     pending.value = true;
     notice.value = tr('Saved. Applying settings; the bot will remain stopped.');
+    confirmFutures.value = false;
     clearSecrets();
     await load();
   } catch (value) {
@@ -222,6 +254,9 @@ watch(
     ++generation;
     clearSecrets();
     info.value = undefined;
+    tradingMode.value = 'spot';
+    leverage.value = 1;
+    confirmFutures.value = false;
     balance.value = undefined;
     busy.value = false;
     pending.value = false;
@@ -244,7 +279,9 @@ onBeforeUnmount(() => {
   <div class="workspace-page trading-settings-page">
     <div class="page-heading">
       <div>
-        <p class="eyebrow">OKX · SPOT</p>
+        <p class="eyebrow">
+          OKX · {{ tr(tradingMode === 'futures' ? 'Isolated futures' : 'Spot') }}
+        </p>
         <h1>{{ tr('Trading account') }}</h1>
         <p>
           {{ tr('Manage exchange credentials and the live trading budget in the Web interface.') }}
@@ -306,6 +343,42 @@ onBeforeUnmount(() => {
       <form class="workspace-panel p-5 sm:p-6" @submit.prevent="save">
         <h2 class="mb-5">{{ tr('Exchange credentials and budget') }}</h2>
         <div class="account-settings-grid">
+          <UFormField
+            :label="tr('Trading mode')"
+            :help="
+              tr(
+                'Use a separate instance and OKX subaccount for each bot. Two API keys for the same account do not isolate funds.',
+              )
+            "
+          >
+            <USelect
+              v-model="tradingMode"
+              class="w-full"
+              :disabled="busy || pending || info.mode_locked"
+              :items="[
+                { label: tr('Spot'), value: 'spot' },
+                { label: tr('Isolated futures'), value: 'futures' },
+              ]"
+            />
+          </UFormField>
+          <UFormField
+            v-if="tradingMode === 'futures'"
+            :label="tr('Futures leverage')"
+            :help="
+              tr(
+                '1–5x for all X8 entry modes, subject to exchange limits. Isolated margin only; changing leverage requires no open positions or orders.',
+              )
+            "
+          >
+            <UInputNumber
+              v-model="leverage"
+              :min="1"
+              :max="5"
+              :step="0.5"
+              class="w-full"
+              :disabled="busy || pending"
+            />
+          </UFormField>
           <UFormField :label="tr('Account label')"
             ><UInput
               v-model="label"
@@ -387,6 +460,17 @@ onBeforeUnmount(() => {
             />
           </UFormField>
         </div>
+        <UCheckbox
+          v-if="tradingMode === 'futures'"
+          v-model="confirmFutures"
+          class="mt-5"
+          :disabled="busy || pending"
+          :label="
+            tr(
+              'I confirm this is a separate isolated-futures bot. Leverage, funding fees and liquidation affect its results.',
+            )
+          "
+        />
         <p class="muted text-sm mt-5">
           {{
             tr(

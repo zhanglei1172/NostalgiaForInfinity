@@ -207,6 +207,11 @@ async def account_error_response(_request, exc):
 
 def configure_account_api(app, config):
   global _installed
+  from .origin import normalized_origin
+
+  app.state.nfi_console_origins = tuple(
+    origin for item in config["api_server"].get("CORS_origins", []) if (origin := normalized_origin(item)) is not None
+  )
   manager = AccountManager(config)
   _managers[id(config["api_server"])] = manager
   if not _installed:

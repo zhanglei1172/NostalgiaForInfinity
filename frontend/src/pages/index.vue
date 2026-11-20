@@ -16,6 +16,9 @@ const botStore = useBotStore();
       }}</UButton>
     </div>
     <div class="workspace-panel p-6 max-w-3xl"><BotList /></div>
+    <UButton to="/bots" color="neutral" icon="i-mdi-robot-outline" class="mt-6">{{
+      tr('Bot management')
+    }}</UButton>
     <UButton v-if="!botStore.hasBots" to="/login" icon="i-mdi-login" class="mt-6">{{
       tr('Login')
     }}</UButton>

@@ -12,6 +12,8 @@ export interface ResearchInfo {
   recipe_revision?: number;
   exchange: string;
   trading_mode: string;
+  leverage?: number;
+  scope?: 'instance' | 'shared';
   pairs: string[];
   timeframes: string[];
   stake_currency: string;

@@ -19,6 +19,7 @@ function updateFavicon() {
 watch(() => [botStore.activeBot?.openTradeCount, settings.openTradesInTitle], updateFavicon);
 
 const items = computed<NavigationMenuItem[]>(() => [
+  { label: tr('Bot management'), to: '/bots', icon: 'i-mdi-robot-outline' },
   ...(!botStore.canRunBacktest
     ? [
         { label: tr('Dashboard'), to: '/dashboard', icon: 'i-mdi-view-dashboard-outline' },
@@ -81,7 +82,7 @@ const accountItems = computed<DropdownMenuItem[][]>(() => [
       onSelect: () => router.push('/account'),
     },
     { label: tr('Connections'), icon: 'i-mdi-lan-connect', onSelect: () => router.push('/') },
-    { label: tr('Add bot'), icon: 'i-mdi-plus', onSelect: () => loginDialog({}) },
+    { label: tr('Connect existing bot'), icon: 'i-mdi-plus', onSelect: () => loginDialog({}) },
     { label: tr('Settings'), icon: 'i-mdi-cog-outline', onSelect: () => router.push('/settings') },
     {
       label: tr('Logout'),
@@ -205,6 +206,9 @@ onBeforeUnmount(() => {
         "
       />
       <BotSelect v-if="botStore.botCount > 1" />
+      <UBadge v-if="botStore.activeBot?.botStatusAvailable" color="neutral" variant="outline">{{
+        tr(botStore.activeBot?.botState.trading_mode === 'futures' ? 'Isolated futures' : 'Spot')
+      }}</UBadge>
       <LanguageSelect />
       <ThemeSelect />
       <ReloadControl v-if="botStore.hasBots" class="hidden sm:flex" />

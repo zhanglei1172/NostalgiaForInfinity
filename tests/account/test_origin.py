@@ -1,6 +1,7 @@
 import unittest
+from unittest.mock import patch
 
-from nfi_account.origin import is_same_origin
+from nfi_account.origin import apply_console_origins, is_same_origin
 from starlette.requests import Request
 
 
@@ -63,3 +64,12 @@ class OriginTests(unittest.TestCase):
     request = self.request("http://internal.test:8080", "same-origin")
     request.scope["headers"].append((b"origin", b"https://evil.test"))
     self.assertFalse(is_same_origin(request))
+
+  def test_shared_console_allowlist_is_explicit_and_validated(self):
+    config = {"api_server": {"CORS_origins": []}}
+    with patch.dict("os.environ", {"NFI_CONSOLE_ORIGINS": '["https://console.example.test"]'}):
+      apply_console_origins(config)
+    self.assertEqual(config["api_server"]["CORS_origins"], ["https://console.example.test"])
+    for value in ('["*"]', '["https://console.example.test/path"]', '"https://console.example.test"', "[null]"):
+      with patch.dict("os.environ", {"NFI_CONSOLE_ORIGINS": value}), self.assertRaises(ValueError):
+        apply_console_origins(config)

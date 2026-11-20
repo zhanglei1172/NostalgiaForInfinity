@@ -7,7 +7,7 @@ import secrets
 import shutil
 from copy import deepcopy
 from datetime import UTC, datetime
-from typing import Annotated
+from typing import Annotated, Literal
 
 import ccxt
 import rapidjson
@@ -23,6 +23,7 @@ from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator
 
 from .config import build_config
 from .storage import CONTROL_LOCK, LiveError, LiveStore, atomic_json
+from .trading import apply_trading_settings, instance_mode, publish_research_snapshot, trading_settings
 
 
 class Credentials(BaseModel):
@@ -30,6 +31,7 @@ class Credentials(BaseModel):
   api_key: SecretStr | None = None
   api_secret: SecretStr | None = None
   passphrase: SecretStr | None = None
+  trading_mode: Literal["spot", "futures"] | None = None
 
 
 class SaveSettings(Credentials):
@@ -37,6 +39,8 @@ class SaveSettings(Credentials):
   account_label: str = Field(min_length=1, max_length=60)
   available_capital: float = Field(ge=100, le=1_000_000_000)
   current_password: SecretStr
+  leverage: float | None = Field(default=None, ge=1, le=5)
+  confirm_futures: bool = False
 
   @field_validator("account_label")
   @classmethod
@@ -76,7 +80,7 @@ def resolve_credentials(payload, existing=None):
   return result
 
 
-def check_connection(credentials, transport, directory=None):
+def check_connection(credentials, transport, directory=None, trading_mode="spot"):
   """Read OKX trading-account identity and USDT balance. Never submit an order."""
   try:
     client = ccxt.okx(
@@ -88,7 +92,10 @@ def check_connection(credentials, transport, directory=None):
         "enableRateLimit": True,
         "timeout": 12000,
         "verbose": False,
-        "options": {"defaultType": "spot", "fetchMarkets": {"types": ["spot"]}},
+        "options": {
+          "defaultType": "swap" if trading_mode == "futures" else "spot",
+          "fetchMarkets": {"types": ["swap" if trading_mode == "futures" else "spot"]},
+        },
       }
     )
     if directory is not None:
@@ -99,6 +106,8 @@ def check_connection(credentials, transport, directory=None):
     uid = str(identity["data"][0]["uid"])
     if not re.fullmatch(r"[0-9]{1,40}", uid):
       raise ValueError("Invalid identity")
+    if trading_mode == "futures" and str(identity["data"][0].get("acctLv")) not in ("2", "3", "4"):
+      raise LiveError("live_futures_account_required")
     balance = client.fetch_balance()
     usdt = balance.get("USDT", {})
     result = {
@@ -173,6 +182,9 @@ def settings_info(store, config):
     "recipe_revision": (profile or {}).get("nfi_recipe_revision"),
     "state": str(get_rpc_optional()._freqtrade.state) if get_rpc_optional() else "unconfigured",
     "database": store.database_counts(),
+    **trading_settings(profile or {"trading_mode": instance_mode()}),
+    "mode_locked": bool(os.environ.get("NFI_TRADING_MODE")) or bool(store.database_counts()["trades"]),
+    "instance_id": os.environ.get("NFI_INSTANCE_ID", "legacy"),
   }
 
 
@@ -184,13 +196,25 @@ def save_settings(store, config, manager, payload):
     if payload.revision != store.revision():
       raise LiveError("live_revision_conflict", 409)
     credentials = resolve_credentials(payload, (existing or {}).get("exchange"))
-    transport = config.get("exchange", {}).get("ccxt_config", {})
-    balance = check_connection(credentials, transport, store.directory)
+    selected = trading_settings(existing or {"trading_mode": instance_mode()})
+    mode = payload.trading_mode or selected["trading_mode"]
+    leverage = payload.leverage if payload.leverage is not None else selected["leverage"]
     counts = store.database_counts()
+    if os.environ.get("NFI_TRADING_MODE") and mode != instance_mode():
+      raise LiveError("live_instance_mode_locked", 409)
+    if existing and counts["trades"] and mode != existing.get("trading_mode", "spot"):
+      raise LiveError("live_mode_has_history", 409)
+    if counts["open_trades"] or counts["open_orders"]:
+      if mode != selected["trading_mode"] or leverage != selected["leverage"]:
+        raise LiveError("live_trading_has_positions", 409)
+    if mode == "futures" and not payload.confirm_futures:
+      raise LiveError("live_futures_confirmation_required")
+    transport = config.get("exchange", {}).get("ccxt_config", {})
+    balance = check_connection(credentials, transport, store.directory, mode)
     if existing and counts["trades"]:
       previous_uid = existing.get("nfi_live_account", {}).get("uid")
       if not previous_uid:
-        previous_uid = check_connection(existing["exchange"], transport, store.directory)["uid"]
+        previous_uid = check_connection(existing["exchange"], transport, store.directory, mode)["uid"]
       if previous_uid != balance["uid"]:
         raise LiveError("live_account_has_history", 409)
     if existing and (counts["open_trades"] or counts["open_orders"]):
@@ -203,15 +227,15 @@ def save_settings(store, config, manager, payload):
       profile = deepcopy(existing)
       profile["available_capital"] = payload.available_capital
     else:
-      mode = rapidjson.PM_COMMENTS | rapidjson.PM_TRAILING_COMMAS
-      base = rapidjson.loads((store.source / "configs/exampleconfig.json").read_text(), parse_mode=mode)
-      blacklist = rapidjson.loads((store.source / "configs/blacklist-okx.json").read_text(), parse_mode=mode)[
+      parse_mode = rapidjson.PM_COMMENTS | rapidjson.PM_TRAILING_COMMAS
+      base = rapidjson.loads((store.source / "configs/exampleconfig.json").read_text(), parse_mode=parse_mode)
+      blacklist = rapidjson.loads((store.source / "configs/blacklist-okx.json").read_text(), parse_mode=parse_mode)[
         "exchange"
       ]["pair_blacklist"]
       from .recipe import initial_document
 
       document, live_draft = initial_document(store)
-      profile = build_config(base, blacklist, document, payload.available_capital)
+      profile = build_config(base, blacklist, document, payload.available_capital, mode, leverage)
       if live_draft:
         profile["nfi_live_recipe_revision"] = document["revision"]
       strategy_dir = store.directory / "strategies"
@@ -219,6 +243,7 @@ def save_settings(store, config, manager, payload):
       target = strategy_dir / "NostalgiaForInfinityX8.py"
       if not target.exists():
         shutil.copyfile(store.source / "NostalgiaForInfinityX8.py", target)
+    apply_trading_settings(profile, mode, leverage)
     profile["exchange"].update(credentials)
     profile["api_server"].update(
       username=config["api_server"]["username"], password=secrets.token_hex(32), jwt_secret_key=secrets.token_hex(32)
@@ -232,6 +257,7 @@ def save_settings(store, config, manager, payload):
     if existing:
       atomic_json(store.directory / ".nfi-live-previous.json", existing)
     atomic_json(store.profile_path, profile)
+    publish_research_snapshot(store, profile)
     return {"saved": True, "revision": profile["nfi_live_revision"], "balance": balance, "state": "stopped"}
 
 
@@ -257,6 +283,7 @@ def configure_live_api(app, config):
     return
   protect_trading_loop()
   store = LiveStore(config["user_data_dir"])
+  publish_research_snapshot(store)
   public = APIRouter(prefix="/api/v1/live", route_class=SecretRoute)
   router = APIRouter(
     prefix="/api/v1/live-settings", route_class=SecretRoute, dependencies=[Depends(api_auth.http_basic_or_jwt_token)]
@@ -287,7 +314,10 @@ def configure_live_api(app, config):
     with CONTROL_LOCK:
       existing = store.profile()
       keys = resolve_credentials(body, (existing or {}).get("exchange"))
-    return check_connection(keys, config.get("exchange", {}).get("ccxt_config", {}), store.directory)
+    mode = body.trading_mode or trading_settings(existing or {"trading_mode": instance_mode()})["trading_mode"]
+    if os.environ.get("NFI_TRADING_MODE") and mode != instance_mode():
+      raise LiveError("live_instance_mode_locked", 409)
+    return check_connection(keys, config.get("exchange", {}).get("ccxt_config", {}), store.directory, mode)
 
   @router.put("")
   def save(body: SaveSettings, request: Request, manager: Annotated[AccountManager, Depends(account_manager)]):
@@ -316,10 +346,13 @@ def configure_live_api(app, config):
     rpc = get_rpc_optional()
     state = rpc._freqtrade.state if rpc else State.STOPPED
     version = rpc._freqtrade.strategy.version() if rpc else None
+    profile = store.profile()
     result = RPC._rpc_show_config(config, state, version)
     result.update(
-      api_version=API_VERSION, nfi_live_management=True, nfi_live_configured=store.profile() is not None, dry_run=False
+      api_version=API_VERSION, nfi_live_management=True, nfi_live_configured=profile is not None, dry_run=False
     )
+    if not rpc:
+      result.update(trading_settings(profile or {"trading_mode": instance_mode()}))
     return result
 
   def control(rpc, action):

@@ -227,7 +227,9 @@ onBeforeUnmount(() => {
   <div class="workspace-page live-recipe-page">
     <div class="page-heading">
       <div>
-        <p class="eyebrow">OKX · SPOT · NFI X8</p>
+        <p class="eyebrow">
+          OKX · {{ tr(info?.trading_mode === 'futures' ? 'Isolated futures' : 'Spot') }} · NFI X8
+        </p>
         <h1>{{ tr('Recipe settings') }}</h1>
         <p>
           {{ tr('Independent live draft, configuration comparison and controlled application.') }}

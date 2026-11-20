@@ -1,6 +1,7 @@
 """Independent live recipe drafts and explicitly confirmed, stopped-worker updates."""
 
 import hashlib
+import os
 from datetime import UTC, datetime
 from typing import Annotated, Literal
 
@@ -56,7 +57,7 @@ def current_document(profile):
   return document(
     {
       "schema_version": 1,
-      "revision": profile.get("nfi_live_recipe_revision", 0),
+      "revision": profile.get("nfi_live_recipe_revision", profile.get("nfi_recipe_revision", 0)),
       "settings": profile.get("nfi_recipe_settings"),
       "updated_at": profile.get("nfi_live_recipe_updated_at"),
     }
@@ -110,6 +111,8 @@ def strategy_info(store, profile):
 
   live = digest(store.directory / "strategies/NostalgiaForInfinityX8.py") if profile else None
   research = digest(store.source / "NostalgiaForInfinityX8.py")
+  if os.environ.get("NFI_INSTANCE_ID"):
+    research = digest(store.directory / "strategies/NostalgiaForInfinityX8.py")
   return {
     "name": "NostalgiaForInfinityX8",
     "live_sha256": live,
@@ -134,6 +137,9 @@ def recipe_info(store, config):
     runtime["max_slippage"] = config.get("nfi_parameters", {}).get("max_slippage", runtime["max_slippage"])
   return {
     "exchange": "okx",
+    "trading_mode": (profile or {}).get(
+      "trading_mode", os.environ.get("NFI_TRADING_MODE", config.get("trading_mode", "spot"))
+    ),
     "saved": saved,
     "defaults": exchange_defaults({"exchange": {"name": "okx"}}),
     "applied_settings": active["settings"] if active else None,
@@ -160,7 +166,7 @@ def update_profile(profile, value):
   if (
     profile.get("dry_run") is not False
     or profile.get("exchange", {}).get("name") != "okx"
-    or profile.get("trading_mode") != "spot"
+    or profile.get("trading_mode") not in ("spot", "futures")
     or profile.get("strategy") != "NostalgiaForInfinityX8"
   ):
     raise LiveError("live_recipe_unsupported", 409)
@@ -204,6 +210,9 @@ def apply_recipe(store, config, manager, payload, rollback=False):
       atomic_json(store.directory / ".nfi-live-recipe.json", value)
     store.write_status("applying", updated["nfi_live_revision"])
     atomic_json(store.profile_path, updated)
+    from .trading import publish_research_snapshot
+
+    publish_research_snapshot(store, updated)
     return {
       "status": "reloading",
       "requested_revision": value["revision"],

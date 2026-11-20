@@ -1,0 +1,9 @@
+# Optional upgrade of the existing OKX spot service. Applying this recreates only that container.
+# Build nfi-paper:multi first, or use the locally verified image with that tag.
+services:
+  freqtrade-live:
+    image: nfi-paper:multi
+    environment:
+      NFI_TRADING_MODE: spot
+      # Exact public origins of other consoles that may manage this bot. No account secrets here.
+      NFI_CONSOLE_ORIGINS: '${NFI_SHARED_CONSOLE_ORIGINS:-["http://127.0.0.1:18082"]}'

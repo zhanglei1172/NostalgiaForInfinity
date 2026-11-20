@@ -58,6 +58,10 @@ export const useResearchStore = defineStore('research', () => {
   }
   function message(value: unknown) {
     if (isApiError(value)) {
+      if (value.data?.detail === 'research_trading_mode_mismatch')
+        return tr(
+          'The research worker uses another trading mode. Connect this instance to its matching research service.',
+        );
       if (value.data?.detail === 'research_data_required')
         return tr(
           'Download historical data for all selected pairs and dates before starting the backtest.',
@@ -112,6 +116,7 @@ export const useResearchStore = defineStore('research', () => {
       strategies.value = data.strategies;
       if (!strategies.value.includes(strategy.value)) strategy.value = strategies.value[0] ?? '';
       await refresh();
+      if (current === generation && info.value) capital.value = info.value.starting_balance;
     } catch (value) {
       if (current === generation) error.value = message(value);
     } finally {

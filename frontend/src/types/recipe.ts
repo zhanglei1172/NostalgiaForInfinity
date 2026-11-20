@@ -19,6 +19,7 @@ export interface RecipeInfo {
 }
 
 export interface LiveRecipeInfo extends RecipeInfo {
+  trading_mode?: 'spot' | 'futures';
   runtime_settings: RecipeSettings | null;
   configured: boolean;
   live_revision: number;

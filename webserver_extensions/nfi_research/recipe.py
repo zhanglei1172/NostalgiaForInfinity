@@ -137,7 +137,9 @@ def recipe_config(config, document, research=False):
     result.pop(key, None)  # Legacy top-level NFI overrides must not shadow the recipe.
   if research:
     validate_research_pairs(config, settings)
-    result["exchange"]["pair_whitelist"] = settings["research_pairs"].copy()
+    result["exchange"]["pair_whitelist"] = [
+      pair + ":USDT" if config.get("trading_mode") == "futures" else pair for pair in settings["research_pairs"]
+    ]
     result["pairlists"] = [{"method": "StaticPairList"}]
   else:
     result["exchange"]["pair_whitelist"] = []
@@ -162,6 +164,12 @@ def recipe_config(config, document, research=False):
       },
       {"method": "VolumePairList", "number_assets": settings["pair_limit"], "sort_key": "quoteVolume"},
     ]
+    if config.get("trading_mode") == "futures" and config["exchange"]["name"] == "okx":
+      # OKX perpetual tickers omit quoteVolume. Both volume filters must use
+      # completed candles, with a refresh interval no shorter than the candle.
+      for pairlist in result["pairlists"]:
+        if pairlist["method"] == "VolumePairList":
+          pairlist.update(lookback_timeframe="1h", lookback_period=24, refresh_period=3600)
   # Freqtrade exports original_config, rather than the runtime dictionary, in result archives.
   original = result.setdefault("original_config", {})
   for key in (

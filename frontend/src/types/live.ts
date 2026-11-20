@@ -20,4 +20,9 @@ export interface LiveSettings {
   recipe_revision: number | null;
   state: string;
   database: { trades: number; open_trades: number; open_orders: number };
+  trading_mode?: 'spot' | 'futures';
+  margin_mode?: string;
+  leverage?: number;
+  mode_locked?: boolean;
+  instance_id?: string;
 }

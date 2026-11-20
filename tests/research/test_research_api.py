@@ -75,7 +75,8 @@ class GatewayTests(unittest.TestCase):
       self.assertEqual(self.client.get("/api/v1/research/" + path).status_code, 401)
       response = self.client.get("/api/v1/research/" + path, headers=self.headers)
       self.assertEqual(response.status_code, 200)
-    self.assertEqual(str(captured[0].url), "http://backtesting:8080/api/v1/" + path)
+    self.assertEqual(str(captured[0].url), "http://backtesting:8080/api/v1/research-info")
+    self.assertEqual(str(captured[1].url), "http://backtesting:8080/api/v1/" + path)
     self.assertEqual(captured[0].headers["Authorization"], self.headers["Authorization"])
 
   def test_gateway_uses_service_auth_and_preserves_query_and_body(self):
@@ -101,12 +102,13 @@ class GatewayTests(unittest.TestCase):
         headers=browser_headers,
         params={"filename": "backtest-2025", "strategy": "NostalgiaForInfinityX8"},
       )
-    self.assertEqual(str(captured[0].url), "http://backtesting:8080/api/v1/strategies")
+    forwarded = [request for request in captured if request.url.path != "/api/v1/research-info"]
+    self.assertEqual(str(forwarded[0].url), "http://backtesting:8080/api/v1/strategies")
     self.assertEqual(captured[0].headers["Authorization"], self.headers["Authorization"])
     self.assertNotEqual(captured[0].headers["Authorization"], browser_headers["Authorization"])
-    self.assertEqual(json.loads(captured[1].content), payload)
-    self.assertEqual(str(captured[1].url), "http://backtesting:8080/api/v1/research-backtest")
-    self.assertEqual(captured[2].url.params["filename"], "backtest-2025")
+    self.assertEqual(json.loads(forwarded[1].content), payload)
+    self.assertEqual(str(forwarded[1].url), "http://backtesting:8080/api/v1/research-backtest")
+    self.assertEqual(forwarded[2].url.params["filename"], "backtest-2025")
 
   def test_worker_auth_failure_does_not_log_main_account_out(self):
     original = httpx.AsyncClient
@@ -117,6 +119,23 @@ class GatewayTests(unittest.TestCase):
       response = self.client.get("/api/v1/research/info", headers=self.headers)
     self.assertEqual(response.status_code, 502)
     self.assertEqual(response.json()["detail"], "research_service_auth_failed")
+
+  def test_mismatched_worker_blocks_direct_backtests_preparation_and_history(self):
+    original = httpx.AsyncClient
+    captured = []
+
+    def respond(request):
+      captured.append(request)
+      return httpx.Response(200, json={"trading_mode": "futures"})
+
+    with patch(
+      "nfi_research.httpx.AsyncClient", side_effect=lambda **kw: original(transport=httpx.MockTransport(respond), **kw)
+    ):
+      for method, path in (("GET", "info"), ("POST", "backtest"), ("POST", "prepare"), ("GET", "backtest/history")):
+        response = self.client.request(method, "/api/v1/research/" + path, headers=self.headers)
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.json()["detail"], "research_trading_mode_mismatch")
+    self.assertTrue(all(request.url.path == "/api/v1/research-info" for request in captured))
 
   def test_unconfigured_live_management_proxies_with_independent_service_auth_and_no_local_worker(self):
     app = FastAPI()

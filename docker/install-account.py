@@ -31,6 +31,15 @@ if marker not in source:
 compile(source, str(path), "exec")
 path.write_text(source)
 
+# Apply the explicit shared-console origin allowlist before API middleware is constructed.
+marker = "from nfi_account.origin import apply_console_origins"
+if marker not in source:
+  if source.count(anchor) != 1:
+    raise RuntimeError("Unsupported Freqtrade configuration layout: review console origins")
+  source = source.replace(anchor, anchor + f"\n            {marker}\n            apply_console_origins(self.config)")
+compile(source, str(path), "exec")
+path.write_text(source)
+
 # A Web preference overrides the stopped fallback only for a fresh worker, never a config reload.
 path = Path(freqtrade.__file__).parent / "worker.py"
 source = path.read_text()

@@ -1,10 +1,12 @@
 """Download NFI candles with enough warm-up history for each individual timeframe."""
 
 import logging
+import os
 import re
 import threading
 from copy import deepcopy
 from datetime import UTC, date, datetime, timedelta
+from pathlib import Path
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from freqtrade.rpc.api_server import api_auth
@@ -44,7 +46,8 @@ class Preparation:
 
     handler = get_datahandler(config["datadir"], config.get("dataformat_ohlcv"))
     for pair in config["exchange"]["pair_whitelist"]:
-      first, last, count = handler.ohlcv_data_min_max(pair, timeframe, CandleType.SPOT)
+      candle_type = CandleType.FUTURES if config.get("trading_mode") == "futures" else CandleType.SPOT
+      first, last, count = handler.ohlcv_data_min_max(pair, timeframe, candle_type)
       if (
         not count
         or first > datetime.combine(payload.start_date, datetime.min.time(), UTC)
@@ -52,6 +55,28 @@ class Preparation:
         < datetime.combine(payload.end_date, datetime.min.time(), UTC) - timedelta(minutes=TIMEFRAMES[timeframe])
       ):
         raise ValueError("Incomplete research candles")
+
+  @staticmethod
+  def validate_futures_data(config, payload):
+    if config.get("trading_mode") != "futures":
+      return
+    from freqtrade.data.history.datahandlers import get_datahandler
+    from freqtrade.enums import CandleType
+
+    # OKX uses hourly mark candles and funding events at intervals of up to eight hours.
+    # Funding files are named 1h by Freqtrade even when the actual events are less frequent.
+    handler = get_datahandler(config["datadir"], config.get("dataformat_ohlcv"))
+    start = datetime.combine(payload.start_date, datetime.min.time(), UTC)
+    end = datetime.combine(payload.end_date, datetime.min.time(), UTC)
+    for pair in config["exchange"]["pair_whitelist"]:
+      for candle_type, gap in ((CandleType.MARK, timedelta(hours=1)), (CandleType.FUNDING_RATE, timedelta(hours=8))):
+        frame = handler.ohlcv_load(pair, "1h", candle_type, fill_missing=False, drop_incomplete=False)
+        dates = frame["date"] if not frame.empty else None
+        if dates is None or dates.iloc[0] > start or dates.iloc[-1] < end - gap:
+          raise ValueError("Incomplete futures mark/funding history")
+        relevant = dates[(dates >= start - gap) & (dates <= end)]
+        if relevant.diff().dropna().gt(gap).any():
+          raise ValueError("Missing futures mark/funding events")
 
   def start(self, payload):
     with self.lock:
@@ -91,6 +116,7 @@ class Preparation:
           download_data(config, exchange)
         # Upstream logs individual download errors instead of always raising them.
         self.validate_timeframe(config, payload, timeframe)
+      self.validate_futures_data(config, payload)
       with self.lock:
         self.status.update(running=False, status="success", completed=len(TIMEFRAMES))
     except Exception:
@@ -111,6 +137,8 @@ class Preparation:
         "max_open_trades": self.config["max_open_trades"],
         "fee": self.config.get("fee", 0.001),
         "preparation": dict(self.status),
+        "leverage": self.config.get("nfi_live_leverage", 1.0),
+        "scope": "instance" if os.environ.get("NFI_RESEARCH_INSTANCE_DIR") else "shared",
       }
 
 
@@ -123,6 +151,25 @@ def configure_worker(app, config):
   store = RecipeStore(config)
 
   def current_config():
+    from nfi_live.storage import read_json
+
+    directory = os.environ.get("NFI_RESEARCH_INSTANCE_DIR")
+    if directory:
+      snapshot = read_json(Path(directory) / "snapshot.json")
+      if not snapshot or snapshot.get("schema_version") != 1:
+        raise HTTPException(503, detail="research_snapshot_unavailable")
+      if snapshot["config"]["trading_mode"] != config.get("trading_mode", "spot"):
+        raise HTTPException(409, detail="research_trading_mode_mismatch")
+      current = deepcopy(config)
+      current.update(snapshot["config"])
+      original = deepcopy(current)
+      original.pop("api_server", None)
+      original.pop("original_config", None)
+      current["original_config"] = original
+      result = recipe_config(current, snapshot["recipe"], research=True)
+      result["tradable_balance_ratio"] = 1.0
+      result["original_config"]["tradable_balance_ratio"] = 1.0
+      return result
     return recipe_config(config, store.read(), research=True)
 
   router = APIRouter(prefix="/api/v1", dependencies=[Depends(api_auth.http_basic_or_jwt_token)])
@@ -172,6 +219,7 @@ def configure_worker(app, config):
       try:
         for timeframe in TIMEFRAMES:
           worker.validate_timeframe(snapshot, dates, timeframe)
+        worker.validate_futures_data(snapshot, dates)
       except (ValueError, OSError):
         raise HTTPException(409, detail="research_data_required") from None
       # Upstream caches candles by timeframe/date only; a changed pair universe must reload them.

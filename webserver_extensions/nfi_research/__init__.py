@@ -28,6 +28,7 @@ def configure_research_api(app, config):
   if str(config.get("runmode")) == "webserver" and os.environ.get("NFI_RECIPE_ROLE") != "live":
     configure_worker(app, config)
   target = os.environ.get("NFI_RESEARCH_URL", "").rstrip("/")
+  expected_mode = os.environ.get("NFI_TRADING_MODE", config.get("trading_mode", "spot"))
   username = os.environ.get(
     "NFI_RESEARCH_USERNAME",
     os.environ.get("FREQTRADE__API_SERVER__USERNAME", config["api_server"].get("username", "")),
@@ -36,6 +37,12 @@ def configure_research_api(app, config):
     "NFI_RESEARCH_PASSWORD",
     os.environ.get("FREQTRADE__API_SERVER__PASSWORD", config["api_server"].get("password", "")),
   )
+  auth_file = os.environ.get("NFI_RESEARCH_AUTH_FILE")
+  if auth_file:
+    from nfi_live.storage import read_json
+
+    credentials = read_json(auth_file)
+    username, password = credentials["username"], credentials["password"]
   router = APIRouter(prefix="/api/v1/research", dependencies=[Depends(api_auth.http_basic_or_jwt_token)])
 
   @router.api_route("/{path:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE"])
@@ -51,13 +58,22 @@ def configure_research_api(app, config):
     )
     try:
       async with httpx.AsyncClient(timeout=60, trust_env=False) as client:
-        result = await client.request(
-          request.method,
-          target + "/api/v1/" + endpoint,
-          params=request.query_params,
-          content=await request.body(),
-          headers={"Content-Type": "application/json"},
-          auth=httpx.BasicAuth(username, password),
+        # Check on every request, including direct POSTs, so another worker can never
+        # run a backtest or expose history for the wrong trading mode.
+        info = await client.get(target + "/api/v1/research-info", auth=httpx.BasicAuth(username, password))
+        if info.status_code == 200 and info.json().get("trading_mode", "spot") != expected_mode:
+          raise HTTPException(409, detail="research_trading_mode_mismatch")
+        result = (
+          info
+          if path == "info" or info.status_code != 200
+          else await client.request(
+            request.method,
+            target + "/api/v1/" + endpoint,
+            params=request.query_params,
+            content=await request.body(),
+            headers={"Content-Type": "application/json"},
+            auth=httpx.BasicAuth(username, password),
+          )
         )
     except httpx.RequestError:
       raise HTTPException(503, detail="research_service_unavailable") from None
